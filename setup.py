@@ -17,7 +17,7 @@ setuptools.setup(
     name=project,
     version=version,
     author="Will Gathright",
-    author_email="williamg@fortresspower.com",
+    author_email="gathright@gmail.com",
     description="Cute design patterns for Apache Airflow",
     long_description=long_description,
     long_description_content_type="text/markdown",

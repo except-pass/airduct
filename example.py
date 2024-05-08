@@ -11,7 +11,7 @@ from airduct import distribute_iterable, make_parallel_processes
 )
 def airduct_example():
 
-    def long_running_task(item, *args, **kwargs):
+    def long_running_task(item):
         '''
         Simulate a long running task
         '''
@@ -35,7 +35,6 @@ def airduct_example():
     #implicitly this does numbers >> distributed
     distributed = distribute_numbers(numbers, parallel=parallel)
     
-
     paralleled_processes = make_parallel_processes(task_id_stub='process_parallel', 
                                       func=long_running_task, 
                                       from_task_id='distribute_numbers', 
