@@ -1,6 +1,7 @@
 import logging
-from typing import Iterable, List
+from typing import Iterable, List, Dict
 
+from airflow.decorators import task
 from airflow.operators.python import PythonOperator
 from airflow.models import taskinstance
 
@@ -15,14 +16,15 @@ def iterate_over_these(from_task_id, parallel, kwargs):
     '''
     ti = get_task_instance(kwargs)
 
-    #this is a poor abstraction because I already want to special case it
+    #expecting a form of {parallel_num: {item:result, item2:result2, ...}}
     iterate_over = ti.xcom_pull(task_ids=from_task_id)
-    try:
-        return iterate_over[parallel]
-    except KeyError:
-        return [ list(item) for item in iterate_over.items()] 
+    log.info(f"Got {iterate_over} from {from_task_id}")
+    if iterate_over is None:
+        raise ValueError(f"Nothing to iterate over from {from_task_id}.  Are you sure it exists and returns a value?")
+    #airflow coerses keys into strings
+    return iterate_over[str(parallel)]
 
-def batch_process(func, from_task_id, parallel, func_args=None, func_kwargs=None, **kwargs):
+def batch_process(func, from_task_id, parallel, func_args=None, func_kwargs=None, include_airflow_context=False, **kwargs):
     '''
     funcargs and funckwargs are the arguments and keyword arguments that will be passed to func
     kwargs come from airflow
@@ -36,19 +38,47 @@ def batch_process(func, from_task_id, parallel, func_args=None, func_kwargs=None
     '''
     func_args = func_args or []
     func_kwargs = func_kwargs or {}
+    if include_airflow_context:
+        func_kwargs['airflow_context'] = kwargs
     iterate_over = iterate_over_these(from_task_id=from_task_id, parallel=parallel, kwargs=kwargs)
     results = {}
-    for item in iterate_over:  #this doesn't handle dicts very well.  Need to rethink all this
-        result = func(item, *func_args, **func_kwargs)
-        results[json.dumps(item)] = result
-    return results
+    for item, prevresult in iterate_over.items():  #this doesn't handle dicts very well.  Need to rethink all this
+        result = func(item, prevresult, *func_args, **func_kwargs)
+        results[item] = result
+    return {parallel: results}
 
-def distribute_iterable(master_iterable:Iterable, parallel:int)->List[List]:
+@task
+def distribute_iterable(master_iterable:Iterable, parallel:int, **kwargs):
+    print(f"Distributing iterable: {master_iterable}")
     split_lists = [master_iterable[i::parallel] for i in range(parallel)]
-    log.info(f"Got numbers: {split_lists}")        
-    return split_lists
+    print(f'Split into {parallel} lists: {split_lists}')
+    returnme = {}
+    for list_num, lst in enumerate(split_lists):
+        returnme[list_num] = {item:None for item in lst}
+        
+    log.info(f"Split to {parallel} lists: {returnme}")
+    return returnme
 
-def make_parallel_processes(task_id_stub, func, from_task_id, parallel, func_args=None, func_kwargs=None):
+@task
+def read_iterable(**airflow_context):
+    #check the cli for overrides, otherwise get some default behavior from function arguments
+    instructions = airflow_context['params'].get('iterate_over', {})
+
+    method = instructions.get('method', 'cli')
+    keyword = instructions.get('keyword')
+
+    iters = None
+    if method == 'cli':  #keyword is the param key
+        iters = instructions.get(keyword)
+    
+    if method == 'file': #keyword is the file path
+        with open(instructions.get(keyword)) as f:
+            iters = [line.strip() for line in f.readlines()]
+    if iters is None:
+        raise ValueError("No iterable found")
+    return iters   
+
+def make_parallel_processes(task_id_stub, func, from_task_id, parallel, func_args=None, func_kwargs=None, include_airflow_context=False):
     '''
     from_task_id accepts templates.  Use {parallel_num} to insert the parallel number
     '''
@@ -59,7 +89,7 @@ def make_parallel_processes(task_id_stub, func, from_task_id, parallel, func_arg
                 task_id=f'{task_id_stub}_{parallel_num}',
                 python_callable=batch_process,
                 op_args=[func, from_task_id.format(parallel_num=parallel_num), parallel_num],
-                op_kwargs={'func_args':func_args, 'func_kwargs':func_kwargs},
+                op_kwargs={'func_args':func_args, 'func_kwargs':func_kwargs, 'include_airflow_context':include_airflow_context},
                 provide_context=True,
             )
         )
