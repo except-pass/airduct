@@ -1,5 +1,3 @@
-import json
-
 import logging
 from typing import Iterable, List, Dict
 
@@ -26,14 +24,10 @@ def iterate_over_these(from_task_id, parallel, kwargs):
     #airflow coerses keys into strings
     return iterate_over[str(parallel)]
 
-def batch_process(func, from_task_id, parallel, func_args=None, func_kwargs=None, include_airflow_context=False, **kwargs):
+def batch_process(func, from_task_id, parallel, func_args=None, func_kwargs=None, include_airflow_context=False, **kwargs)->Dict:
     '''
     funcargs and funckwargs are the arguments and keyword arguments that will be passed to func
     kwargs come from airflow
-
-    Assumes that the previous task has pushed a list of items to be processed to xcom.  
-        e.g. You want 3 parallel tasks you would get the split of 
-    [ [1, 4, 7], [2, 5, 8], [3, 6, 9] ]
 
     func must accept the item to be processed as the first argument 
         e.g.: process_serial_number(serial_number, *args, **kwargs)
@@ -51,6 +45,9 @@ def batch_process(func, from_task_id, parallel, func_args=None, func_kwargs=None
 
 @task
 def distribute_iterable(master_iterable:Iterable, parallel:int, **kwargs):
+    '''
+    The form of the iterable is {parallel_num: {item:result, item2:result2, ...}}
+    '''
     print(f"Distributing iterable: {master_iterable}")
     split_lists = [master_iterable[i::parallel] for i in range(parallel)]
     print(f'Split into {parallel} lists: {split_lists}')
